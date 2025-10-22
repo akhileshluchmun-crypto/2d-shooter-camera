@@ -1,4 +1,3 @@
-// webrtc-client.js — final working version
 let localStream = null;
 let pc = null;
 let ws = null;
@@ -6,8 +5,22 @@ let ws = null;
 const localVideo = document.getElementById('localVideo');
 const remoteVideo = document.getElementById('remoteVideo');
 
-// ✅ Use your actual Render URL (yours was this)
 const SIGNAL_URL = "wss://webrtc-signal-server-tdk6.onrender.com";
+
+// ✅ Utility: waits until WebSocket is open before sending
+async function safeSend(message) {
+  if (!ws) throw new Error("WebSocket not initialized");
+  if (ws.readyState === WebSocket.CONNECTING) {
+    await new Promise((resolve) => {
+      ws.addEventListener("open", resolve, { once: true });
+    });
+  }
+  if (ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify(message));
+  } else {
+    console.error("Cannot send, WebSocket not open:", ws.readyState);
+  }
+}
 
 // ===== Camera Setup =====
 async function startLocalCamera() {
@@ -23,14 +36,10 @@ async function startLocalCamera() {
   }
 }
 
-// ===== WebSocket Connection (with Promise to wait for ready) =====
+// ===== WebSocket Connection =====
 function connectSignaling() {
   return new Promise((resolve, reject) => {
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      console.log("WebSocket already connected");
-      return resolve();
-    }
-
+    if (ws && ws.readyState === WebSocket.OPEN) return resolve();
     console.log("Connecting to signaling:", SIGNAL_URL);
     ws = new WebSocket(SIGNAL_URL);
 
@@ -38,12 +47,10 @@ function connectSignaling() {
       console.log("WebSocket connected ✅");
       resolve();
     };
-
     ws.onerror = (err) => {
       console.error("WebSocket error ❌", err);
       reject(err);
     };
-
     ws.onmessage = async (msg) => {
       const data = JSON.parse(msg.data);
       console.log("Received:", data.type);
@@ -69,15 +76,12 @@ async function createPeer() {
   pc = new RTCPeerConnection({
     iceServers: [
       { urls: "stun:stun.l.google.com:19302" },
-      { urls: "turn:relay1.expressturn.com:3478", username: "efgh", credential: "efgh" } // optional relay
+      { urls: "turn:relay1.expressturn.com:3478", username: "efgh", credential: "efgh" }
     ]
   });
 
   pc.onicecandidate = (e) => {
-    if (e.candidate && ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "ice", candidate: e.candidate }));
-      console.log("Sent ICE candidate");
-    }
+    if (e.candidate) safeSend({ type: "ice", candidate: e.candidate });
   };
 
   pc.ontrack = (e) => {
@@ -92,7 +96,7 @@ async function createPeer() {
   }
 }
 
-// ===== Offer Creation =====
+// ===== Create Offer =====
 document.getElementById("createOffer").addEventListener("click", async () => {
   try {
     console.log("Create Offer clicked");
@@ -101,14 +105,14 @@ document.getElementById("createOffer").addEventListener("click", async () => {
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
-    ws.send(JSON.stringify({ type: "offer", offer }));
+    await safeSend({ type: "offer", offer });
     console.log("Offer created & sent ✅");
   } catch (e) {
     console.error("Offer creation failed ❌", e);
   }
 });
 
-// ===== Handle Offer (Receiver) =====
+// ===== Handle Offer =====
 async function handleOffer(offer) {
   try {
     console.log("Handling offer...");
@@ -119,28 +123,26 @@ async function handleOffer(offer) {
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
 
-    ws.send(JSON.stringify({ type: "answer", answer }));
+    await safeSend({ type: "answer", answer });
     console.log("Answer created & sent ✅");
   } catch (e) {
     console.error("Error handling offer ❌", e);
   }
 }
 
-// ===== Join Connection =====
+// ===== Join =====
 document.getElementById("joinOffer").addEventListener("click", async () => {
   console.log("Join clicked");
   await connectSignaling();
 });
 
-// ===== Camera & Hangup Controls =====
+// ===== Camera & Hangup =====
 document.getElementById("startLocalCamera").addEventListener("click", startLocalCamera);
-
 document.getElementById("hangup").addEventListener("click", () => {
   if (pc) pc.close();
   if (ws) ws.close();
   console.log("Call ended ❌");
 });
-
 document.getElementById("toggleCameraPreview").addEventListener("change", (e) => {
   localVideo.srcObject = e.target.checked ? localStream : null;
 });
