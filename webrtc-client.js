@@ -14,8 +14,6 @@ async function safeSend(message) {
   }
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(message));
-  } else {
-    console.warn("⚠️ Tried to send but socket not open", ws.readyState);
   }
 }
 
@@ -57,20 +55,12 @@ function connectSignaling() {
         await handleOffer(data.offer);
       } 
       else if (data.type === "answer") {
-        // ✅ Only apply answer once and at the right time
-        if (!pc) {
-          console.warn("⚠️ No PeerConnection yet, ignoring answer");
-          return;
-        }
-
-        if (pc.signalingState !== "have-local-offer" || pc.remoteDescription) {
-          console.warn("⚠️ Ignored duplicate or late answer, state:", pc.signalingState);
-          return;
-        }
-
+        if (!pc) return;
+        // Ignore duplicates or late answers
+        if (pc.remoteDescription || pc.signalingState !== "have-local-offer") return;
         try {
           await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
-          console.log("✅ Remote answer applied successfully");
+          console.log("✅ Remote answer applied");
         } catch (err) {
           console.error("❌ Failed to apply answer:", err);
         }
@@ -133,19 +123,21 @@ document.getElementById("createOffer").addEventListener("click", async () => {
 async function handleOffer(offer) {
   try {
     await connectSignaling();
-    await createPeer();
 
-    // ✅ Only process offer if stable (not already negotiating)
-    if (pc.signalingState !== "stable") {
-      console.warn("Already negotiating, skipping offer");
-      return;
+    // Reset peer if already negotiating
+    if (pc && pc.signalingState !== "stable") {
+      console.warn("⚠️ Peer not stable, resetting");
+      pc.close();
+      pc = null;
     }
+
+    if (!pc) await createPeer();
 
     await pc.setRemoteDescription(new RTCSessionDescription(offer));
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     await safeSend({ type: "answer", answer });
-    console.log("Answer created & sent ✅");
+    console.log("✅ Answer created & sent");
   } catch (e) {
     console.error("Offer handling failed ❌", e);
   }
