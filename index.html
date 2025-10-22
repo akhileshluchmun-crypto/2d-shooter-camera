@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>2D Shooter + Camera</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>2D Shooter — Camera Experiment</h1>
+      <p>
+        Move with ← → or A/D • Shoot with Space • Start camera to preview or
+        stream
+      </p>
+    </header>
+
+    <main>
+      <section class="left">
+        <canvas id="gameCanvas" width="720" height="480"></canvas>
+        <div class="controls">
+          <button id="startGame">Start / Restart</button>
+          <label
+            ><input id="toggleCameraPreview" type="checkbox" /> Show local
+            camera</label
+          >
+        </div>
+      </section>
+
+      <aside class="right">
+        <h2>Camera & Streaming</h2>
+        <video id="localVideo" autoplay playsinline muted></video>
+        <video id="remoteVideo" autoplay playsinline></video>
+
+        <div class="webrtc-controls">
+          <button id="startLocalCamera">Start Camera</button>
+          <button id="createOffer">Create Offer</button>
+          <button id="joinOffer">Join</button>
+          <button id="hangup">Hang up</button>
+          <small
+            >For remote streaming, use your Render server link in
+            webrtc-client.js</small
+          >
+        </div>
+      </aside>
+    </main>
+
+    <footer>
+      <p>
+        Made for personal cybersecurity testing. Camera access will request
+        permission.
+      </p>
+    </footer>
+
+    <script src="game.js"></script>
+    <script src="webrtc-client.js"></script>
+  </body>
+</html>
