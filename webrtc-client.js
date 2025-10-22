@@ -1,6 +1,7 @@
-// ==========================================
-// WebRTC Client - Stable Negotiation Version
-// ==========================================
+// ============================================
+// WebRTC Client (Automatic Role, Stable Build)
+// ============================================
+
 let localStream = null;
 let pc = null;
 let ws = null;
@@ -9,7 +10,9 @@ const localVideo = document.getElementById("localVideo");
 const remoteVideo = document.getElementById("remoteVideo");
 const SIGNAL_URL = "wss://webrtc-signal-server-tdk6.onrender.com";
 
-// ---------- Utility ----------
+let isCaller = false; // will auto-detect based on message order
+
+// ---------- Safe send through WebSocket ----------
 async function safeSend(message) {
   if (!ws) throw new Error("WebSocket not initialized");
   if (ws.readyState === WebSocket.CONNECTING) {
@@ -20,23 +23,24 @@ async function safeSend(message) {
   }
 }
 
-// ---------- Camera ----------
+// ---------- Start camera ----------
 async function startLocalCamera() {
   try {
-    localStream = await navigator.mediaDevices.getUserMedia({
-      video: true,
-      audio: false
-    });
-    localVideo.srcObject = localStream;
-    document.getElementById("toggleCameraPreview").checked = true;
-    console.log("📸 Camera started ✅");
+    if (!localStream) {
+      localStream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: false
+      });
+      localVideo.srcObject = localStream;
+      console.log("📸 Local camera started ✅");
+    }
   } catch (err) {
-    console.error("Camera error:", err);
+    console.error("Camera error ❌", err);
     alert("Camera access failed: " + err.message);
   }
 }
 
-// ---------- Signaling ----------
+// ---------- Connect to signaling server ----------
 function connectSignaling() {
   return new Promise((resolve, reject) => {
     if (ws && ws.readyState === WebSocket.OPEN) return resolve();
@@ -55,9 +59,11 @@ function connectSignaling() {
 
     ws.onmessage = async msg => {
       const data = JSON.parse(msg.data);
-      console.log("🛰️ Received:", data.type, "| Signaling:", pc?.signalingState);
+      console.log("🛰️ Received:", data.type, "| State:", pc?.signalingState);
 
       if (data.type === "offer") {
+        // If we get an offer first, we are the callee
+        isCaller = false;
         await handleOffer(data.offer);
       } 
       else if (data.type === "answer") {
@@ -74,20 +80,20 @@ function connectSignaling() {
         }
       } 
       else if (data.type === "ice") {
-        try {
-          if (pc && data.candidate) {
+        if (pc && data.candidate) {
+          try {
             await pc.addIceCandidate(data.candidate);
             console.log("🧊 ICE candidate added");
+          } catch (e) {
+            console.warn("ICE add error:", e);
           }
-        } catch (e) {
-          console.warn("ICE add error:", e);
         }
       }
     };
   });
 }
 
-// ---------- Peer Connection ----------
+// ---------- Create peer connection ----------
 async function createPeer() {
   pc = new RTCPeerConnection({
     iceServers: [
@@ -100,47 +106,74 @@ async function createPeer() {
     ]
   });
 
-  // Logs for state debugging
-  pc.onsignalingstatechange = () =>
-    console.log("🌀 Signaling state:", pc.signalingState);
-  pc.onconnectionstatechange = () =>
-    console.log("🔗 Connection state:", pc.connectionState);
-  pc.oniceconnectionstatechange = () =>
-    console.log("🧊 ICE state:", pc.iceConnectionState);
+  // Debug logs
+  pc.onsignalingstatechange = () => console.log("🌀 Signaling:", pc.signalingState);
+  pc.onconnectionstatechange = () => console.log("🔗 Connection:", pc.connectionState);
+  pc.oniceconnectionstatechange = () => console.log("🧊 ICE:", pc.iceConnectionState);
 
   // Send ICE candidates
   pc.onicecandidate = e => {
     if (e.candidate) safeSend({ type: "ice", candidate: e.candidate });
   };
 
-  // Remote video track
+  // Handle remote stream
   pc.ontrack = e => {
-    console.log("🎥 Remote stream added");
+    console.log("🎥 Remote stream received");
     remoteVideo.srcObject = e.streams[0];
   };
 
-  // Local video tracks
-  if (localStream) {
-    for (const track of localStream.getTracks()) {
-      pc.addTrack(track, localStream);
+  // Start local camera automatically if not started
+  if (!localStream) {
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({
+        video: true,
+        audio: false
+      });
+      localVideo.srcObject = localStream;
+      console.log("📸 Auto camera start");
+    } catch (err) {
+      console.error("❌ Camera failed:", err);
+      alert("Camera permission is required on both devices");
+      return;
     }
+  }
+
+  // Add local tracks
+  for (const track of localStream.getTracks()) {
+    pc.addTrack(track, localStream);
   }
 }
 
 // ---------- Create Offer ----------
 document.getElementById("createOffer").addEventListener("click", async () => {
+  isCaller = true;
+  await startCall();
+});
+
+// ---------- Join Offer ----------
+document.getElementById("joinOffer").addEventListener("click", async () => {
+  isCaller = false;
+  await startCall();
+});
+
+async function startCall() {
   try {
     await connectSignaling();
+    await startLocalCamera();
     await createPeer();
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    await safeSend({ type: "offer", offer });
-    console.log("📨 Offer created & sent ✅");
+    if (isCaller) {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      await safeSend({ type: "offer", offer });
+      console.log("📨 Offer created & sent ✅");
+    } else {
+      console.log("👂 Waiting for offer...");
+    }
   } catch (e) {
-    console.error("Offer creation failed ❌", e);
+    console.error("❌ Call start failed:", e);
   }
-});
+}
 
 // ---------- Handle Offer ----------
 async function handleOffer(offer) {
@@ -148,9 +181,8 @@ async function handleOffer(offer) {
     await connectSignaling();
     if (!pc) await createPeer();
 
-    // Prevent duplicate or invalid offers
     if (pc.signalingState === "have-local-offer") {
-      console.warn("⚠️ Already have local offer, rolling back...");
+      console.warn("⚠️ Rolling back before applying new offer");
       await Promise.all([
         pc.setLocalDescription({ type: "rollback" }),
         pc.setRemoteDescription(new RTCSessionDescription(offer))
@@ -173,15 +205,7 @@ async function handleOffer(offer) {
   }
 }
 
-// ---------- Join Button ----------
-document.getElementById("joinOffer").addEventListener("click", async () => {
-  await connectSignaling();
-  console.log("👥 Joined signaling server");
-});
-
-// ---------- Controls ----------
-document.getElementById("startLocalCamera").addEventListener("click", startLocalCamera);
-
+// ---------- Hang Up ----------
 document.getElementById("hangup").addEventListener("click", () => {
   if (pc) {
     pc.close();
@@ -194,6 +218,7 @@ document.getElementById("hangup").addEventListener("click", () => {
   console.log("📴 Call ended ❌");
 });
 
+// ---------- Toggle Camera Preview ----------
 document.getElementById("toggleCameraPreview").addEventListener("change", e => {
   localVideo.srcObject = e.target.checked ? localStream : null;
 });
