@@ -1,3 +1,6 @@
+// ===============================
+// WebRTC Client (Stable Version)
+// ===============================
 let localStream = null;
 let pc = null;
 let ws = null;
@@ -6,7 +9,7 @@ const localVideo = document.getElementById("localVideo");
 const remoteVideo = document.getElementById("remoteVideo");
 const SIGNAL_URL = "wss://webrtc-signal-server-tdk6.onrender.com";
 
-// --- Utility: wait for WebSocket open ---
+// ---------- Utility ----------
 async function safeSend(message) {
   if (!ws) throw new Error("WebSocket not initialized");
   if (ws.readyState === WebSocket.CONNECTING) {
@@ -17,7 +20,7 @@ async function safeSend(message) {
   }
 }
 
-// --- Camera setup ---
+// ---------- Camera ----------
 async function startLocalCamera() {
   try {
     localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
@@ -30,7 +33,7 @@ async function startLocalCamera() {
   }
 }
 
-// --- Signaling connection ---
+// ---------- Signaling ----------
 function connectSignaling() {
   return new Promise((resolve, reject) => {
     if (ws && ws.readyState === WebSocket.OPEN) return resolve();
@@ -56,8 +59,10 @@ function connectSignaling() {
       } 
       else if (data.type === "answer") {
         if (!pc) return;
-        // Ignore duplicates or late answers
-        if (pc.remoteDescription || pc.signalingState !== "have-local-offer") return;
+        if (pc.signalingState !== "have-local-offer") {
+          console.warn("Ignored answer: state is", pc.signalingState);
+          return;
+        }
         try {
           await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
           console.log("✅ Remote answer applied");
@@ -67,7 +72,7 @@ function connectSignaling() {
       } 
       else if (data.type === "ice") {
         try {
-          if (pc) {
+          if (pc && data.candidate) {
             await pc.addIceCandidate(data.candidate);
             console.log("ICE candidate added");
           }
@@ -79,7 +84,7 @@ function connectSignaling() {
   });
 }
 
-// --- Create peer connection ---
+// ---------- Peer Connection ----------
 async function createPeer() {
   pc = new RTCPeerConnection({
     iceServers: [
@@ -104,7 +109,7 @@ async function createPeer() {
   }
 }
 
-// --- Create Offer ---
+// ---------- Create Offer ----------
 document.getElementById("createOffer").addEventListener("click", async () => {
   try {
     await connectSignaling();
@@ -119,21 +124,22 @@ document.getElementById("createOffer").addEventListener("click", async () => {
   }
 });
 
-// --- Handle Offer ---
+// ---------- Handle Offer ----------
 async function handleOffer(offer) {
   try {
     await connectSignaling();
-
-    // Reset peer if already negotiating
-    if (pc && pc.signalingState !== "stable") {
-      console.warn("⚠️ Peer not stable, resetting");
-      pc.close();
-      pc = null;
-    }
-
     if (!pc) await createPeer();
 
-    await pc.setRemoteDescription(new RTCSessionDescription(offer));
+    if (pc.signalingState !== "stable") {
+      console.warn("⚠️ Not stable, rolling back before applying new offer");
+      await Promise.all([
+        pc.setLocalDescription({ type: "rollback" }),
+        pc.setRemoteDescription(new RTCSessionDescription(offer))
+      ]);
+    } else {
+      await pc.setRemoteDescription(new RTCSessionDescription(offer));
+    }
+
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
     await safeSend({ type: "answer", answer });
@@ -143,12 +149,12 @@ async function handleOffer(offer) {
   }
 }
 
-// --- Join button ---
+// ---------- Join Button ----------
 document.getElementById("joinOffer").addEventListener("click", async () => {
   await connectSignaling();
 });
 
-// --- Controls ---
+// ---------- Controls ----------
 document.getElementById("startLocalCamera").addEventListener("click", startLocalCamera);
 
 document.getElementById("hangup").addEventListener("click", () => {
