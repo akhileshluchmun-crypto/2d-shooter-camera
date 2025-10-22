@@ -7,7 +7,7 @@ const localVideo = document.getElementById('localVideo');
 const remoteVideo = document.getElementById('remoteVideo');
 
 // 🔹 Replace this with your actual Render WebSocket URL once deployed
-const SIGNAL_URL = "https://webrtc-signal-server-tdk6.onrender.com";
+const SIGNAL_URL = "wss://webrtc-signal-server-tdk6.onrender.com";
 
 async function startLocalCamera() {
   try {
