@@ -1,24 +1,25 @@
+// ====== WebRTC Client (Final Stable Version) ======
+
 let localStream = null;
 let pc = null;
 let ws = null;
 
-const localVideo = document.getElementById('localVideo');
-const remoteVideo = document.getElementById('remoteVideo');
+const localVideo = document.getElementById("localVideo");
+const remoteVideo = document.getElementById("remoteVideo");
 
+// ✅ Use your Render WebSocket URL
 const SIGNAL_URL = "wss://webrtc-signal-server-tdk6.onrender.com";
 
-// ✅ Utility: waits until WebSocket is open before sending
+// ===== Utility: safe send with wait for open =====
 async function safeSend(message) {
   if (!ws) throw new Error("WebSocket not initialized");
   if (ws.readyState === WebSocket.CONNECTING) {
-    await new Promise((resolve) => {
-      ws.addEventListener("open", resolve, { once: true });
-    });
+    await new Promise((resolve) => ws.addEventListener("open", resolve, { once: true }));
   }
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(message));
   } else {
-    console.error("Cannot send, WebSocket not open:", ws.readyState);
+    console.error("Cannot send, WebSocket not open. State:", ws.readyState);
   }
 }
 
@@ -28,7 +29,7 @@ async function startLocalCamera() {
     console.log("Requesting camera...");
     localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
     localVideo.srcObject = localStream;
-    document.getElementById('toggleCameraPreview').checked = true;
+    document.getElementById("toggleCameraPreview").checked = true;
     console.log("Camera started ✅");
   } catch (err) {
     console.error("Camera error:", err);
@@ -40,6 +41,7 @@ async function startLocalCamera() {
 function connectSignaling() {
   return new Promise((resolve, reject) => {
     if (ws && ws.readyState === WebSocket.OPEN) return resolve();
+
     console.log("Connecting to signaling:", SIGNAL_URL);
     ws = new WebSocket(SIGNAL_URL);
 
@@ -47,18 +49,31 @@ function connectSignaling() {
       console.log("WebSocket connected ✅");
       resolve();
     };
+
     ws.onerror = (err) => {
       console.error("WebSocket error ❌", err);
       reject(err);
     };
+
     ws.onmessage = async (msg) => {
       const data = JSON.parse(msg.data);
       console.log("Received:", data.type);
-      if (data.type === "offer") await handleOffer(data.offer);
+
+      if (data.type === "offer") {
+        await handleOffer(data.offer);
+      }
+
       else if (data.type === "answer") {
-        await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
-        console.log("Answer applied ✅");
-      } else if (data.type === "ice") {
+        // ✅ Prevent setting answer twice
+        if (pc && pc.signalingState === "have-local-offer") {
+          await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+          console.log("Answer applied ✅");
+        } else {
+          console.warn("Ignoring answer because signalingState =", pc?.signalingState);
+        }
+      }
+
+      else if (data.type === "ice") {
         try {
           await pc.addIceCandidate(data.candidate);
           console.log("ICE candidate added");
@@ -70,7 +85,7 @@ function connectSignaling() {
   });
 }
 
-// ===== Peer Connection =====
+// ===== Peer Connection Setup =====
 async function createPeer() {
   console.log("Creating RTCPeerConnection");
   pc = new RTCPeerConnection({
@@ -119,10 +134,15 @@ async function handleOffer(offer) {
     await connectSignaling();
     await createPeer();
 
+    // ✅ Ignore duplicate offers when already connected
+    if (pc.signalingState === "stable") {
+      console.log("Ignoring duplicate offer (already stable)");
+      return;
+    }
+
     await pc.setRemoteDescription(new RTCSessionDescription(offer));
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
-
     await safeSend({ type: "answer", answer });
     console.log("Answer created & sent ✅");
   } catch (e) {
@@ -130,13 +150,13 @@ async function handleOffer(offer) {
   }
 }
 
-// ===== Join =====
+// ===== Join (for receiver) =====
 document.getElementById("joinOffer").addEventListener("click", async () => {
   console.log("Join clicked");
   await connectSignaling();
 });
 
-// ===== Camera & Hangup =====
+// ===== Buttons =====
 document.getElementById("startLocalCamera").addEventListener("click", startLocalCamera);
 document.getElementById("hangup").addEventListener("click", () => {
   if (pc) pc.close();
