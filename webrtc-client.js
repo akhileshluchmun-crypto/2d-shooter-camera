@@ -51,16 +51,12 @@ function connectSignaling() {
 
     ws.onmessage = async msg => {
       const data = JSON.parse(msg.data);
-      console.log("Received:", data.type);
       console.log("🛰️ Received:", data.type, "State:", pc?.signalingState);
 
-      if (data.type === "offer") await handleOffer(data.offer);
       if (data.type === "offer") {
         await handleOffer(data.offer);
       } 
       else if (data.type === "answer") {
-        // ✅ Apply answer only if in the right state
-        if (pc && pc.signalingState === "have-local-offer") {
         // ✅ Only apply answer once and at the right time
         if (!pc) {
           console.warn("⚠️ No PeerConnection yet, ignoring answer");
@@ -72,21 +68,19 @@ function connectSignaling() {
           return;
         }
 
+        if (!pc) return;
+        // Ignore duplicates or late answers
+        if (pc.remoteDescription || pc.signalingState !== "have-local-offer") return;
         try {
           await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
-          console.log("Answer applied ✅");
-        } else {
-          console.warn("Ignored answer, state:", pc?.signalingState);
           console.log("✅ Remote answer applied successfully");
+          console.log("✅ Remote answer applied");
         } catch (err) {
           console.error("❌ Failed to apply answer:", err);
         }
-      } else if (data.type === "ice") {
       } 
       else if (data.type === "ice") {
         try {
-          await pc.addIceCandidate(data.candidate);
-          console.log("ICE added");
           if (pc) {
             await pc.addIceCandidate(data.candidate);
             console.log("ICE candidate added");
@@ -94,34 +88,90 @@ function connectSignaling() {
         } catch (e) {
           console.warn("ICE add error:", e);
         }
-@@ -90,7 +108,9 @@
+      }
+    };
+  });
+}
+
+// --- Create peer connection ---
+async function createPeer() {
+  pc = new RTCPeerConnection({
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "turn:relay1.expressturn.com:3478", username: "efgh", credential: "efgh" }
+    ]
+  });
+
+  pc.onicecandidate = e => {
+    if (e.candidate) safeSend({ type: "ice", candidate: e.candidate });
+  };
+
+  pc.ontrack = e => {
+    console.log("Remote stream 🎥");
+    remoteVideo.srcObject = e.streams[0];
   };
 
   if (localStream) {
-    for (const t of localStream.getTracks()) pc.addTrack(t, localStream);
     for (const track of localStream.getTracks()) {
       pc.addTrack(track, localStream);
     }
   }
 }
 
-@@ -115,7 +135,7 @@
+// --- Create Offer ---
+document.getElementById("createOffer").addEventListener("click", async () => {
+  try {
     await connectSignaling();
     await createPeer();
 
-    // ✅ Only handle if not already stable
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    await safeSend({ type: "offer", offer });
+    console.log("Offer created & sent ✅");
+  } catch (e) {
+    console.error("Offer creation failed ❌", e);
+  }
+});
+
+// --- Handle Offer ---
+async function handleOffer(offer) {
+  try {
+    await connectSignaling();
+    await createPeer();
+
     // ✅ Only process offer if stable (not already negotiating)
     if (pc.signalingState !== "stable") {
       console.warn("Already negotiating, skipping offer");
       return;
-@@ -138,11 +158,19 @@
+    // Reset peer if already negotiating
+    if (pc && pc.signalingState !== "stable") {
+      console.warn("⚠️ Peer not stable, resetting");
+      pc.close();
+      pc = null;
+    }
+
+    if (!pc) await createPeer();
+
+    await pc.setRemoteDescription(new RTCSessionDescription(offer));
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    await safeSend({ type: "answer", answer });
+    console.log("Answer created & sent ✅");
+    console.log("✅ Answer created & sent");
+  } catch (e) {
+    console.error("Offer handling failed ❌", e);
+  }
+}
+
+// --- Join button ---
+document.getElementById("joinOffer").addEventListener("click", async () => {
+  await connectSignaling();
+});
 
 // --- Controls ---
 document.getElementById("startLocalCamera").addEventListener("click", startLocalCamera);
 
 document.getElementById("hangup").addEventListener("click", () => {
-  if (pc) pc.close();
-  if (ws) ws.close();
   if (pc) {
     pc.close();
     pc = null;
